@@ -1,0 +1,15 @@
+[project]
+name = "unicto-discord-bot"
+version = "0.1.0"
+description = "NOVA - UNICTO Discord AI Assistant"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "discord.py>=2.7.1",
+    "google-genai>=2.23.0",
+    "python-dotenv>=1.2.3",
+    "sqlalchemy>=2.0.52",
+]
+
+[project.scripts]
+nova = "app.main:main"
