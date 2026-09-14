@@ -965,23 +965,10 @@ async def ask_nova(
 # DISCORD
 # ============================================================
 
-intents = discord.Intents.default()
-intents.message_content = True
+from app.bot.client import NOVAClient
 
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents,
-)
+bot = NOVAClient(request_queue)
 
-
-@bot.event
-async def setup_hook():
-
-    await request_queue.start()
-
-    logger.info(
-        "NOVA startup hooks completed."
-    )
 
 
 @bot.event
