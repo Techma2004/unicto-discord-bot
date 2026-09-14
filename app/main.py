@@ -16,6 +16,8 @@ from app.services.team import team_service
 from app.services.projects import project_service
 from app.services.project_members import project_member_service
 from app.services.tasks import task_service
+from app.services.project_memory import project_memory
+
 
 # ============================================================
 # CONFIG
@@ -2040,6 +2042,97 @@ async def on_message(message):
                 "Use `!task` to see the available commands."
             )
             return
+            # --------------------------------
+            # PROJECT MEMORY COMMANDS
+            # --------------------------------
+
+            if message.content.startswith("!memory"):
+                raw = message.content[len("!memory"):].strip()
+
+                if not raw:
+                    await message.channel.send(
+                        "🧠 **Project Memory**\n"
+                        "Usage: `!memory add <project> | <title> | <content>`"
+                    )
+                    return
+
+                parts = [part.strip() for part in raw.split("|", 2)]
+
+                action = parts[0].lower()
+
+                if action != "add":
+                    await message.channel.send(
+                        "❌ Unknown memory command.\n"
+                        "Use: `!memory add <project> | <title> | <content>`"
+                    )
+                    return
+
+                if len(parts) != 3:
+                    await message.channel.send(
+                        "🧠 Usage:\n"
+                        "`!memory add <project> | <title> | <content>`"
+                    )
+                    return
+
+                project_name = parts[0]
+                title = parts[1]
+                content = parts[2]
+
+                # The first part currently contains "add <project>"
+                action_parts = project_name.split(maxsplit=1)
+
+                if len(action_parts) != 2:
+                    await message.channel.send(
+                        "🧠 Usage:\n"
+                        "`!memory add <project> | <title> | <content>`"
+                    )
+                    return
+
+                project_name = action_parts[1].strip()
+
+                if not project_name or not title or not content:
+                    await message.channel.send(
+                        "❌ Project, title, and content cannot be empty."
+                    )
+                    return
+
+                project = await project_service.get_project(
+                    project_name
+                )
+
+                if not project:
+                    await message.channel.send(
+                        f"❌ Project `{project_name}` was not found."
+                    )
+                    return
+
+                member = await project_member_service.get_member(
+                    project.id,
+                    message.author.id,
+                )
+
+                if not member:
+                    await message.channel.send(
+                        "❌ You must be a member of this project "
+                        "to add shared memory."
+                    )
+                    return
+
+                note = await project_memory.create_note(
+                    project_id=project.id,
+                    title=title,
+                    content=content,
+                    created_by_discord_user_id=message.author.id,
+                )
+
+                await message.channel.send(
+                    "🧠 **Memory saved!**\n"
+                    f"**ID:** `{note.id}`\n"
+                    f"**Project:** `{project.name}`\n"
+                    f"**Title:** {note.title}"
+                )
+
+                return
     # --------------------------------------------------------
     # !ask
     # --------------------------------------------------------
