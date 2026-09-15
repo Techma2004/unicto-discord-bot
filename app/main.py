@@ -1,6 +1,6 @@
 import logging
 import os
-
+import asyncio
 import discord
 from dotenv import load_dotenv
 from app.health import start_health_server
@@ -381,11 +381,9 @@ async def process_ai_request_inner(
 
 bot.nova_ai_handler = process_ai_request
 
-
 # ============================================================
 # START
 # ============================================================
-
 
 async def run_nova():
     logger.info(
@@ -394,9 +392,31 @@ async def run_nova():
 
     await start_health_server()
 
-    await bot.start(
-        DISCORD_TOKEN
-    )
+    while True:
+        try:
+            await bot.start(
+                DISCORD_TOKEN
+            )
+
+        except discord.HTTPException as error:
+            if error.status == 429:
+                logger.warning(
+                    "Discord rate limited NOVA. "
+                    "Waiting 5 minutes before retrying..."
+                )
+
+                await asyncio.sleep(300)
+                continue
+
+            raise
+
+        except Exception:
+            logger.exception(
+                "NOVA stopped unexpectedly. "
+                "Waiting 30 seconds before retrying..."
+            )
+
+            await asyncio.sleep(30)
 
 
 def main():
