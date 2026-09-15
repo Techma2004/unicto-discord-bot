@@ -1,8 +1,8 @@
-
 from discord.ext import commands
 
 from app.services.project_memory import project_memory
 from app.services.projects import project_service
+from app.services.permissions import permission_service
 
 
 class MemoryCommands(commands.Cog):
@@ -65,9 +65,13 @@ class MemoryCommands(commands.Cog):
             )
             return
 
-        if project.owner_discord_user_id != ctx.author.id:
+        if not await permission_service.can_manage_memory(
+            project,
+            ctx.author,
+        ):
             await ctx.send(
-                "⛔ Only the project owner can add project memory."
+                "⛔ You do not have permission to add "
+                "project memory."
             )
             return
 
@@ -75,7 +79,7 @@ class MemoryCommands(commands.Cog):
             project_id=project.id,
             title=title,
             content=content,
-            created_by_discord_user_id=ctx.author.id,
+            created_by_discord_user_id=ctx.author,
         )
 
         await ctx.send(
@@ -101,6 +105,16 @@ class MemoryCommands(commands.Cog):
                 f"❌ Project `{project_name}` was not found."
             )
             return
+
+            if not permission_service.can_view_project(
+                project,
+                ctx.author,
+            ):
+                await ctx.send(
+                    "⛔ You do not have permission to view "
+                    "this project's memory."
+                )
+                return
 
         notes = await project_memory.get_notes(
             project.id
@@ -145,9 +159,13 @@ class MemoryCommands(commands.Cog):
             )
             return
 
-        if project.owner_discord_user_id != ctx.author.id:
+        if not await permission_service.can_manage_memory(
+            project,
+            ctx.author,
+        ):
             await ctx.send(
-                "⛔ Only the project owner can delete project memory."
+                "⛔ You do not have permission to delete "
+                "project memory."
             )
             return
 

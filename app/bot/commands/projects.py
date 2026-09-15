@@ -28,36 +28,45 @@ class ProjectCommands(commands.Cog):
             "`!project member remove <name> @user`"
         )
 
-    @project.command(name="create")
-    async def project_create(
-        self,
-        ctx,
-        name,
-        *,
-        description=None,
-    ):
-        """Create a project."""
-
-        project, created = await project_service.create_project(
-            name=name,
-            description=description,
-            owner_discord_user_id=ctx.author.id,
-        )
-
-        if not created:
-            await ctx.send(
-                f"⚠️ Project `{name}` already exists."
+        @project.command(name="create")
+        async def project_create(
+            self,
+            ctx,
+            name,
+            *,
+            description=None,
+        ):
+            """Create a project."""
+        
+            if not permission_service.can_create_project(
+                ctx.author
+            ):
+                await ctx.send(
+                    "⛔ Only Founder, Administrator, or Moderator "
+                    "members can create projects."
+                )
+                return
+        
+            project, created = await project_service.create_project(
+                name=name,
+                description=description,
+                owner_discord_user_id=ctx.author,
             )
-            return
-
-        await team_service.register_member(
-            ctx.author
-        )
-
-        await ctx.send(
-            f"✅ Project **{project.name}** created.\n"
-            f"👑 Owner: {ctx.author.mention}"
-        )
+        
+            if not created:
+                await ctx.send(
+                    f"⚠️ Project `{name}` already exists."
+                )
+                return
+        
+            await team_service.register_member(
+                ctx.author
+            )
+        
+            await ctx.send(
+                f"✅ Project **{project.name}** created.\n"
+                f"👑 Owner: {ctx.author.mention}"
+            )
 
     @project.command(name="list")
     async def project_list(self, ctx):
@@ -134,7 +143,7 @@ class ProjectCommands(commands.Cog):
 
         if not await permission_service.can_manage_project(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to delete this project."
@@ -232,7 +241,7 @@ class ProjectCommands(commands.Cog):
 
         if not await permission_service.can_manage_members(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to add "
@@ -248,7 +257,7 @@ class ProjectCommands(commands.Cog):
             role == "owner"
             and not await permission_service.is_project_owner(
                 project,
-                ctx.author.id,
+                ctx.author,
             )
         ):
             await ctx.send(
@@ -305,7 +314,7 @@ class ProjectCommands(commands.Cog):
 
         if not await permission_service.can_manage_members(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to remove "

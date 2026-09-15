@@ -51,7 +51,7 @@ class TaskCommands(commands.Cog):
 
         if not await permission_service.can_manage_tasks(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to create "
@@ -80,7 +80,7 @@ class TaskCommands(commands.Cog):
             project_id=project.id,
             title=title,
             description=description,
-            created_by_discord_user_id=ctx.author.id,
+            created_by_discord_user_id=ctx.author,
         )
 
         if status == "invalid_priority":
@@ -234,7 +234,7 @@ class TaskCommands(commands.Cog):
 
         if not await permission_service.can_manage_tasks(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to assign "
@@ -347,7 +347,7 @@ class TaskCommands(commands.Cog):
 
         if not await permission_service.can_manage_tasks(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to unassign "
@@ -437,7 +437,7 @@ class TaskCommands(commands.Cog):
 
         if not await permission_service.can_manage_tasks(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to update "
@@ -504,7 +504,7 @@ class TaskCommands(commands.Cog):
 
         if not await permission_service.can_manage_tasks(
             project,
-            ctx.author.id,
+            ctx.author,
         ):
             await ctx.send(
                 "⛔ You do not have permission to delete "
