@@ -1,6 +1,7 @@
 import logging
 import os
 
+import discord
 from dotenv import load_dotenv
 
 from app.ai.router import GeminiRouter
@@ -78,15 +79,37 @@ bot = NOVAClient(request_queue)
 
 
 # ============================================================
-# DISCORD MESSAGE CHUNKING
+# TARGET HELPERS
+# ============================================================
+
+def get_author(target):
+    """Return the Discord user from a Message or Interaction."""
+
+    if isinstance(target, discord.Interaction):
+        return target.user
+
+    return target.author
+
+
+def get_channel(target):
+    """Return the Discord channel from a Message or Interaction."""
+
+    return target.channel
+
+
+# ============================================================
+# DISCORD RESPONSE
 # ============================================================
 
 async def send_reply(
-    message,
+    target,
     text,
 ):
     """
-    Discord has a 2000-character message limit.
+    Send a response to either a Discord Message
+    or a Discord Interaction.
+
+    Discord messages are limited to 2000 characters.
     """
 
     for index in range(
@@ -96,10 +119,13 @@ async def send_reply(
     ):
         chunk = text[index:index + 2000]
 
-        await message.reply(
-            chunk,
-            mention_author=False,
-        )
+        if isinstance(target, discord.Interaction):
+            await target.followup.send(chunk)
+        else:
+            await target.reply(
+                chunk,
+                mention_author=False,
+            )
 
 
 # ============================================================
@@ -107,31 +133,35 @@ async def send_reply(
 # ============================================================
 
 async def process_ai_request(
-    message,
+    target,
     prompt,
 ):
     """
     Submit a NOVA AI request to the request queue.
+
+    Supports both:
+    - Discord Message
+    - Discord Interaction
     """
 
     if not prompt.strip():
-        await message.reply(
+        await send_reply(
+            target,
             "Please give me something to work with 😄",
-            mention_author=False,
         )
         return
 
     try:
         await request_queue.submit(
             process_ai_request_inner,
-            message,
+            target,
             prompt,
         )
 
     except RuntimeError as error:
-        await message.reply(
+        await send_reply(
+            target,
             f"⏳ {error}",
-            mention_author=False,
         )
 
     except Exception:
@@ -139,15 +169,19 @@ async def process_ai_request(
             "Queued NOVA request failed."
         )
 
-        await message.reply(
+        await send_reply(
+            target,
             "⚠️ I ran into a problem while processing that request. "
             "Please try again.",
-            mention_author=False,
         )
 
 
+# ============================================================
+# AI REQUEST WORKER
+# ============================================================
+
 async def process_ai_request_inner(
-    message,
+    target,
     prompt,
 ):
     """
@@ -156,30 +190,33 @@ async def process_ai_request_inner(
     This function runs inside the request queue.
     """
 
+    author = get_author(target)
+    channel = get_channel(target)
+
     # ------------------------------------------------
     # 1. Usage Guard
     # ------------------------------------------------
 
     allowed, limit_message = await usage_guard.check(
-        message.author.id
+        author.id
     )
 
     if not allowed:
         logger.info(
             "Usage Guard blocked Discord ID %s: %s",
-            message.author.id,
+            author.id,
             limit_message,
         )
 
-        await message.reply(
+        await send_reply(
+            target,
             limit_message,
-            mention_author=False,
         )
 
         return
 
     try:
-        async with message.channel.typing():
+        async with channel.typing():
 
             # ------------------------------------------------
             # 2. Register / update UNICTO team member
@@ -187,13 +224,13 @@ async def process_ai_request_inner(
 
             member, is_new_member = (
                 await team_service.register_member(
-                    message.author
+                    author
                 )
             )
 
             logger.info(
                 "Team member registered | Discord ID: %s | New: %s",
-                message.author.id,
+                author.id,
                 is_new_member,
             )
 
@@ -202,13 +239,13 @@ async def process_ai_request_inner(
             # ------------------------------------------------
 
             user_id = await memory.get_or_create_user(
-                message.author
+                author
             )
 
             logger.info(
                 "NOVA user ID: %s | Discord ID: %s",
                 user_id,
-                message.author.id,
+                author.id,
             )
 
             # ------------------------------------------------
@@ -218,7 +255,7 @@ async def process_ai_request_inner(
             conversation_id = (
                 await memory.get_or_create_conversation(
                     user_id,
-                    message.channel.id,
+                    channel.id,
                 )
             )
 
@@ -247,19 +284,18 @@ async def process_ai_request_inner(
             # 6. Context Manager
             # ------------------------------------------------
 
-
-
             member_context = (
-                f"Discord username: {message.author.name}\n"
-                f"Display name: {message.author.display_name}\n"
-            )
-            
-            conversation_context = context_manager.build_prompt_context(
-                previous_messages,
-                member_context=member_context,
+                f"Discord username: {author.name}\n"
+                f"Display name: {author.display_name}\n"
             )
 
-            
+            conversation_context = (
+                context_manager.build_prompt_context(
+                    previous_messages,
+                    member_context=member_context,
+                )
+            )
+
             logger.info(
                 "Context prepared: %s characters",
                 len(conversation_context),
@@ -279,17 +315,17 @@ async def process_ai_request_inner(
             # ------------------------------------------------
 
             usage_guard.record_request(
-                message.author.id
+                author.id
             )
 
             await usage_guard.record_usage(
-                message.author.id,
+                author.id,
                 model_used,
             )
 
             logger.info(
                 "Usage recorded | Discord ID: %s | Model: %s",
-                message.author.id,
+                author.id,
                 model_used,
             )
 
@@ -323,7 +359,7 @@ async def process_ai_request_inner(
             # ------------------------------------------------
 
             await send_reply(
-                message,
+                target,
                 reply,
             )
 
@@ -332,10 +368,10 @@ async def process_ai_request_inner(
             "NOVA request failed."
         )
 
-        await message.reply(
+        await send_reply(
+            target,
             "⚠️ I ran into a problem while processing that request. "
             "Please try again.",
-            mention_author=False,
         )
 
 

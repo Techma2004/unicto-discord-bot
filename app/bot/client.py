@@ -17,9 +17,7 @@ class NOVAClient(commands.Bot):
     @staticmethod
     def _build_intents():
         intents = discord.Intents.default()
-
         intents.message_content = True
-
         return intents
 
     async def setup_hook(self):
@@ -52,5 +50,8 @@ class NOVAClient(commands.Bot):
             "app.bot.events"
         )
 
-        print("NOVA command extensions loaded.")
+        # Sync slash commands with Discord.
+        await self.tree.sync()
 
+        print("NOVA command extensions loaded.")
+        print("Slash commands synced.")

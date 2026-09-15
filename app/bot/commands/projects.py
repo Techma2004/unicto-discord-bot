@@ -3,187 +3,140 @@ from discord.ext import commands
 
 from app.services.projects import project_service
 from app.services.project_members import project_member_service
-from app.services.team import team_service
 from app.services.permissions import permission_service
 
 
 class ProjectCommands(commands.Cog):
-    """Commands for managing UNICTO projects."""
+    """Project management commands for NOVA."""
 
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.group(name="project", invoke_without_command=True)
+    @commands.group(
+        name="project",
+        invoke_without_command=True,
+    )
     async def project(self, ctx):
         """Manage UNICTO projects."""
 
-        await ctx.send(
-            "📁 **Project commands**\n"
-            "`!project create <name> [description]`\n"
-            "`!project list`\n"
-            "`!project info <name>`\n"
-            "`!project delete <name>`\n"
-            "`!project member list <name>`\n"
-            "`!project member add <name> @user <role>`\n"
-            "`!project member remove <name> @user`"
-        )
-
-        @project.command(name="create")
-        async def project_create(
-            self,
-            ctx,
-            name,
-            *,
-            description=None,
-        ):
-            """Create a project."""
-        
-            if not permission_service.can_create_project(
-                ctx.author
-            ):
-                await ctx.send(
-                    "⛔ Only Founder, Administrator, or Moderator "
-                    "members can create projects."
-                )
-                return
-        
-            project, created = await project_service.create_project(
-                name=name,
-                description=description,
-                owner_discord_user_id=ctx.author,
-            )
-        
-            if not created:
-                await ctx.send(
-                    f"⚠️ Project `{name}` already exists."
-                )
-                return
-        
-            await team_service.register_member(
-                ctx.author
-            )
-        
+        if ctx.invoked_subcommand is None:
             await ctx.send(
-                f"✅ Project **{project.name}** created.\n"
-                f"👑 Owner: {ctx.author.mention}"
+                "📁 **Project Commands**\n"
+                "`!project create <name> | <description>`\n"
+                "`!project list`\n"
+                "`!project info <name>`\n"
+                "`!project delete <name>`\n"
+                "`!project member list <name>`\n"
+                "`!project member add <name> @user [role]`\n"
+                "`!project member remove <name> @user`"
             )
 
-    @project.command(name="list")
-    async def project_list(self, ctx):
-        """List all projects."""
+    @project.command(name="create")
+    async def project_create(
+        self,
+        ctx,
+        *,
+        details=None,
+    ):
+        """Create a new project."""
 
-        projects = await project_service.get_all_projects()
-
-        if not projects:
+        if not permission_service.can_create_project(ctx.author):
             await ctx.send(
-                "📭 No projects have been created yet."
+                "⛔ You do not have permission to create projects."
             )
             return
 
-        lines = [
-            "📁 **UNICTO Projects**"
-        ]
-
-        for project in projects:
-            lines.append(
-                f"• **{project.name}** — "
-                f"{project.description or 'No description'}"
+        if not details:
+            await ctx.send(
+                "❌ Please provide a project name.\n"
+                "Example: `!project create NOVA | Discord AI assistant`"
             )
+            return
+
+        if "|" in details:
+            name, description = details.split("|", 1)
+            name = name.strip()
+            description = description.strip()
+        else:
+            name = details.strip()
+            description = ""
+
+        if not name:
+            await ctx.send(
+                "❌ Project name cannot be empty."
+            )
+            return
+
+        project, created = await project_service.create_project(
+            name=name,
+            description=description,
+            owner_discord_user_id=ctx.author.id,
+        )
+
+        if not created:
+            await ctx.send(
+                f"⚠️ A project named **{name}** already exists."
+            )
+            return
 
         await ctx.send(
-            "\n".join(lines)
+            f"✅ Project **{project.name}** created successfully.\n"
+            f"👑 Owner: {ctx.author.mention}"
         )
+
+    @project.command(name="list")
+    async def project_list(self, ctx):
+        """List projects."""
+
+        projects = await project_service.get_all_projects()
+
+        visible_projects = [
+            project
+            for project in projects
+            if permission_service.can_view_project(
+                project,
+                ctx.author,
+            )
+        ]
+
+        if not visible_projects:
+            await ctx.send(
+                "📁 No projects are currently available to you."
+            )
+            return
+
+        lines = ["📁 **UNICTO Projects**"]
+
+        for project in visible_projects:
+            description = (
+                f" — {project.description}"
+                if project.description
+                else ""
+            )
+
+            lines.append(
+                f"• **{project.name}**{description}"
+            )
+
+        await ctx.send("\n".join(lines))
 
     @project.command(name="info")
     async def project_info(
         self,
         ctx,
-        name,
+        *,
+        project_name=None,
     ):
         """Show project information."""
 
-        project = await project_service.get_project(
-            name
-        )
-
-        if not project:
+        if not project_name:
             await ctx.send(
-                f"❌ Project `{name}` was not found."
+                "❌ Please provide a project name.\n"
+                "Example: `!project info NOVA`"
             )
             return
 
-        members = await project_member_service.get_members(
-            project.id
-        )
-
-        await ctx.send(
-            f"📁 **{project.name}**\n"
-            f"📝 {project.description or 'No description'}\n"
-            f"👥 Members: **{len(members)}**\n"
-            f"👑 Owner ID: `{project.owner_discord_user_id}`"
-        )
-
-    @project.command(name="delete")
-    async def project_delete(
-        self,
-        ctx,
-        name,
-    ):
-        """Delete a project."""
-
-        project = await project_service.get_project(
-            name
-        )
-
-        if not project:
-            await ctx.send(
-                f"❌ Project `{name}` was not found."
-            )
-            return
-
-        if not await permission_service.can_manage_project(
-            project,
-            ctx.author,
-        ):
-            await ctx.send(
-                "⛔ You do not have permission to delete this project."
-            )
-            return
-
-        deleted = await project_service.delete_project(
-            name
-        )
-
-        if deleted:
-            await ctx.send(
-                f"🗑️ Project `{name}` has been deleted."
-            )
-        else:
-            await ctx.send(
-                f"❌ Could not delete project `{name}`."
-            )
-
-    @project.group(
-        name="member",
-        invoke_without_command=True,
-    )
-    async def project_member(self, ctx):
-        """Manage project members."""
-
-        await ctx.send(
-            "👥 **Project member commands**\n"
-            "`!project member list <project>`\n"
-            "`!project member add <project> @user <role>`\n"
-            "`!project member remove <project> @user`"
-        )
-
-    @project_member.command(name="list")
-    async def member_list(
-        self,
-        ctx,
-        project_name,
-    ):
-        """List project members."""
+        project_name = project_name.strip()
 
         project = await project_service.get_project(
             project_name
@@ -195,13 +148,166 @@ class ProjectCommands(commands.Cog):
             )
             return
 
+        if not permission_service.can_view_project(
+            project,
+            ctx.author,
+        ):
+            await ctx.send(
+                "⛔ You do not have permission to view this project."
+            )
+            return
+
+        members = await project_member_service.get_members(
+            project.id
+        )
+
+        embed = discord.Embed(
+            title=f"📁 {project.name}",
+            description=(
+                project.description
+                or "No description provided."
+            ),
+        )
+
+        embed.add_field(
+            name="👑 Owner",
+            value=f"<@{project.owner_discord_user_id}>",
+            inline=False,
+        )
+
+        if members:
+            member_lines = []
+
+            for member in members:
+                member_lines.append(
+                    f"• <@{member.discord_user_id}> — "
+                    f"`{member.role}`"
+                )
+
+            embed.add_field(
+                name="👥 Members",
+                value="\n".join(member_lines),
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="👥 Members",
+                value="No project members yet.",
+                inline=False,
+            )
+
+        await ctx.send(embed=embed)
+
+    @project.command(name="delete")
+    async def project_delete(
+        self,
+        ctx,
+        *,
+        project_name=None,
+    ):
+        """Delete a project."""
+
+        if not project_name:
+            await ctx.send(
+                "❌ Please provide a project name."
+            )
+            return
+
+        project_name = project_name.strip()
+
+        project = await project_service.get_project(
+            project_name
+        )
+
+        if not project:
+            await ctx.send(
+                f"❌ Project `{project_name}` was not found."
+            )
+            return
+
+        if not permission_service.can_manage_project(
+            project,
+            ctx.author,
+        ):
+            await ctx.send(
+                "⛔ You do not have permission to delete "
+                "this project."
+            )
+            return
+
+        deleted = await project_service.delete_project(
+            project.name
+        )
+
+        if not deleted:
+            await ctx.send(
+                "⚠️ The project could not be deleted."
+            )
+            return
+
+        await ctx.send(
+            f"🗑️ Project **{project.name}** has been deleted."
+        )
+
+    @project.group(
+        name="member",
+        invoke_without_command=True,
+    )
+    async def project_member(self, ctx):
+        """Manage project members."""
+
+        if ctx.invoked_subcommand is None:
+            await ctx.send(
+                "👥 **Project Member Commands**\n"
+                "`!project member list <project>`\n"
+                "`!project member add <project> @user [role]`\n"
+                "`!project member remove <project> @user`"
+            )
+
+    @project_member.command(name="list")
+    async def member_list(
+        self,
+        ctx,
+        *,
+        project_name=None,
+    ):
+        """List project members."""
+
+        if not project_name:
+            await ctx.send(
+                "❌ Please provide a project name."
+            )
+            return
+
+        project_name = project_name.strip()
+
+        project = await project_service.get_project(
+            project_name
+        )
+
+        if not project:
+            await ctx.send(
+                f"❌ Project `{project_name}` was not found."
+            )
+            return
+
+        if not permission_service.can_view_project(
+            project,
+            ctx.author,
+        ):
+            await ctx.send(
+                "⛔ You do not have permission to view "
+                "this project."
+            )
+            return
+
         members = await project_member_service.get_members(
             project.id
         )
 
         if not members:
             await ctx.send(
-                "📭 This project has no members."
+                f"👥 Project **{project.name}** has no members yet."
             )
             return
 
@@ -215,19 +321,26 @@ class ProjectCommands(commands.Cog):
                 f"`{member.role}`"
             )
 
-        await ctx.send(
-            "\n".join(lines)
-        )
+        await ctx.send("\n".join(lines))
 
     @project_member.command(name="add")
     async def member_add(
         self,
         ctx,
-        project_name,
-        member: discord.Member,
+        project_name=None,
+        member: discord.Member = None,
         role="member",
     ):
         """Add a member to a project."""
+
+        if not project_name or not member:
+            await ctx.send(
+                "❌ Usage:\n"
+                "`!project member add <project> @user [role]`"
+            )
+            return
+
+        project_name = project_name.strip()
 
         project = await project_service.get_project(
             project_name
@@ -239,68 +352,100 @@ class ProjectCommands(commands.Cog):
             )
             return
 
-        if not await permission_service.can_manage_members(
+        if not permission_service.can_manage_members(
             project,
             ctx.author,
         ):
             await ctx.send(
-                "⛔ You do not have permission to add "
-                "project members."
+                "⛔ You do not have permission to manage "
+                "this project's members."
             )
             return
 
         role = role.lower()
 
-        # Only the actual project owner can assign
-        # the owner role.
+        valid_roles = project_member_service.VALID_ROLES
+
+        if role not in valid_roles:
+            roles = ", ".join(
+                f"`{item}`"
+                for item in sorted(valid_roles)
+            )
+
+            await ctx.send(
+                f"❌ Invalid project role.\n"
+                f"Valid roles: {roles}"
+            )
+            return
+
         if (
             role == "owner"
-            and not await permission_service.is_project_owner(
+            and not permission_service.is_project_owner(
                 project,
                 ctx.author,
             )
         ):
             await ctx.send(
                 "⛔ Only the project owner can assign "
-                "the `owner` role."
+                "the `owner` project role."
             )
             return
 
-        result = await project_member_service.add_member(
-            project_id=project.id,
-            discord_user_id=member.id,
-            role=role,
+        existing = await project_member_service.get_member(
+            project.id,
+            member.id,
         )
 
-        project_member, created, status = result
-
-        if status == "invalid_role":
+        if existing:
             await ctx.send(
-                "❌ Invalid role. Available roles:\n"
-                "`owner`, `developer`, `designer`, "
-                "`tester`, `manager`, `member`"
+                f"⚠️ {member.mention} is already a member "
+                f"of **{project.name}**."
             )
             return
 
-        if status == "already_member":
-            await ctx.send(
-                f"⚠️ {member.mention} is already a project member."
+        created_member, created, status = (
+            await project_member_service.add_member(
+                project_id=project.id,
+                discord_user_id=member.id,
+                role=role,
             )
+        )
+
+        if not created:
+            if status == "already_member":
+                await ctx.send(
+                    f"⚠️ {member.mention} is already a member "
+                    f"of **{project.name}**."
+                )
+            else:
+                await ctx.send(
+                    f"⚠️ Could not add {member.mention} "
+                    f"to the project."
+                )
             return
 
         await ctx.send(
             f"✅ Added {member.mention} to **{project.name}** "
-            f"as `{project_member.role}`."
+            f"as `{created_member.role}`."
         )
 
     @project_member.command(name="remove")
     async def member_remove(
         self,
         ctx,
-        project_name,
-        member: discord.Member,
+        project_name=None,
+        member: discord.Member = None,
     ):
         """Remove a member from a project."""
+
+        if not project_name or not member:
+            await ctx.send(
+                "❌ Usage:\n"
+                "`!project member remove <project> @user`"
+            )
+            return
+
+        project_name = project_name.strip()
 
         project = await project_service.get_project(
             project_name
@@ -312,31 +457,35 @@ class ProjectCommands(commands.Cog):
             )
             return
 
-        if not await permission_service.can_manage_members(
+        if not permission_service.can_manage_members(
             project,
             ctx.author,
         ):
             await ctx.send(
-                "⛔ You do not have permission to remove "
-                "project members."
+                "⛔ You do not have permission to manage "
+                "this project's members."
             )
             return
 
-        if member.id == project.owner_discord_user_id:
+        if permission_service.is_project_owner(
+            project,
+            member,
+        ):
             await ctx.send(
-                "⛔ The project owner cannot be removed."
+                "⛔ The project owner cannot be removed "
+                "from the project."
             )
             return
 
         removed = await project_member_service.remove_member(
-            project_id=project.id,
-            discord_user_id=member.id,
+            project.id,
+            member.id,
         )
 
         if not removed:
             await ctx.send(
-                f"❌ {member.mention} is not a member of "
-                f"**{project.name}**."
+                f"⚠️ {member.mention} is not a member "
+                f"of **{project.name}**."
             )
             return
 
