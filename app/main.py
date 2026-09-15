@@ -247,12 +247,19 @@ async def process_ai_request_inner(
             # 6. Context Manager
             # ------------------------------------------------
 
-            conversation_context = (
-                context_manager.build_prompt_context(
-                    previous_messages
-                )
+
+
+            member_context = (
+                f"Discord username: {message.author.name}\n"
+                f"Display name: {message.author.display_name}\n"
+            )
+            
+            conversation_context = context_manager.build_prompt_context(
+                previous_messages,
+                member_context=member_context,
             )
 
+            
             logger.info(
                 "Context prepared: %s characters",
                 len(conversation_context),
