@@ -85,21 +85,33 @@ class PermissionService:
     def is_project_owner(self, project, member):
         """
         Check whether the Discord member owns the project.
+
+        This is metadata only and does not grant permissions.
         """
 
         return project.owner_discord_user_id == member.id
 
+    def can_create_project(self, member):
+        """
+        Only management roles can create projects.
+        """
+
+        return (
+            self.get_primary_nova_role(member)
+            in self.MANAGEMENT_ROLES
+        )
+
     def can_manage_project(self, project, member):
         """
         Check whether a Discord member can manage a project.
+
+        Discord roles are the source of truth.
         """
 
-        if self.is_project_owner(project, member):
-            return True
-
-        role = self.get_primary_nova_role(member)
-
-        return role in self.MANAGEMENT_ROLES
+        return (
+            self.get_primary_nova_role(member)
+            in self.MANAGEMENT_ROLES
+        )
 
     def can_manage_members(self, project, member):
         """
@@ -138,7 +150,10 @@ class PermissionService:
         project information.
         """
 
-        return self.get_primary_nova_role(member) in self.WORK_ROLES
+        return (
+            self.get_primary_nova_role(member)
+            in self.WORK_ROLES
+        )
 
 
 permission_service = PermissionService()
