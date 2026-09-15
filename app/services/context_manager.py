@@ -1,6 +1,6 @@
 class ContextManager:
     """
-    Keeps NOVA's conversation context within a safe size.
+    Builds structured, size-limited context for NOVA.
     """
 
     MAX_MESSAGES = 12
@@ -14,7 +14,12 @@ class ContextManager:
         prepared = []
 
         for message in messages[-self.MAX_MESSAGES:]:
-            content = message["content"].strip()
+            content = str(
+                message.get("content", "")
+            ).strip()
+
+            if not content:
+                continue
 
             if len(content) > self.MAX_MESSAGE_CHARS:
                 content = (
@@ -23,14 +28,14 @@ class ContextManager:
                 )
 
             prepared.append({
-                "role": message["role"],
+                "role": message.get("role", "user"),
                 "content": content,
                 "model": message.get("model"),
             })
 
         return prepared
 
-    def build_prompt_context(self, messages):
+    def build_conversation_history(self, messages):
         messages = self.prepare_messages(messages)
 
         if not messages:
@@ -39,25 +44,68 @@ class ContextManager:
         lines = []
 
         for message in messages:
-            if message["role"] == "user":
-                speaker = "User"
-            else:
-                speaker = "NOVA"
+            speaker = (
+                "User"
+                if message["role"] == "user"
+                else "NOVA"
+            )
 
             lines.append(
                 f"{speaker}: {message['content']}"
             )
 
-        context = "\n".join(lines)
+        return "\n".join(lines)
+
+    def build_prompt_context(
+        self,
+        messages,
+        member_context="",
+        project_context="",
+        memory_context="",
+    ):
+        sections = []
+
+        if member_context.strip():
+            sections.append(
+                "--- MEMBER CONTEXT ---\n"
+                + member_context.strip()
+                + "\n--- END MEMBER CONTEXT ---"
+            )
+
+        if project_context.strip():
+            sections.append(
+                "--- PROJECT CONTEXT ---\n"
+                + project_context.strip()
+                + "\n--- END PROJECT CONTEXT ---"
+            )
+
+        if memory_context.strip():
+            sections.append(
+                "--- RELEVANT MEMORY ---\n"
+                + memory_context.strip()
+                + "\n--- END RELEVANT MEMORY ---"
+            )
+
+        conversation_history = (
+            self.build_conversation_history(messages)
+        )
+
+        if conversation_history:
+            sections.append(
+                "--- CONVERSATION HISTORY ---\n"
+                + conversation_history
+                + "\n--- END CONVERSATION HISTORY ---"
+            )
+
+        if not sections:
+            return ""
+
+        context = "\n\n".join(sections)
 
         if len(context) > self.MAX_CONTEXT_CHARS:
             context = context[-self.MAX_CONTEXT_CHARS:]
 
-        return (
-            "\n\n--- CONVERSATION HISTORY ---\n"
-            + context
-            + "\n--- END CONVERSATION HISTORY ---\n"
-        )
+        return "\n\n" + context + "\n"
 
 
 context_manager = ContextManager()
