@@ -1,9 +1,11 @@
 import discord
 from discord.ext import commands
+from discord.ext.commands import Greedy
 
 from app.services.projects import project_service
 from app.services.project_members import project_member_service
 from app.services.tasks import task_service
+from app.services.permissions import permission_service
 
 
 class TaskCommands(commands.Cog):
@@ -18,10 +20,11 @@ class TaskCommands(commands.Cog):
 
         await ctx.send(
             "📋 **Task commands**\n"
-            "`!task create <project> <title>`\n"
+            "`!task create <project> <title> [| description]`\n"
             "`!task list <project>`\n"
             "`!task info <project> <task_id>`\n"
-            "`!task assign <project> <task_id> @user`\n"
+            "`!task assign <project> <task_id> @user [@user ...]`\n"
+            "`!task unassign <project> <task_id> @user [@user ...]`\n"
             "`!task status <project> <task_id> <status>`\n"
             "`!task delete <project> <task_id>`"
         )
@@ -32,7 +35,7 @@ class TaskCommands(commands.Cog):
         ctx,
         project_name,
         *,
-        title,
+        task_data,
     ):
         """Create a new task."""
 
@@ -46,22 +49,58 @@ class TaskCommands(commands.Cog):
             )
             return
 
-        if project.owner_discord_user_id != ctx.author.id:
+        if not await permission_service.can_manage_tasks(
+            project,
+            ctx.author.id,
+        ):
             await ctx.send(
-                "⛔ Only the project owner can create tasks."
+                "⛔ You do not have permission to create "
+                "tasks in this project."
             )
             return
 
-        task = await task_service.create_task(
+        if "|" in task_data:
+            title, description = task_data.split(
+                "|",
+                1,
+            )
+            title = title.strip()
+            description = description.strip()
+        else:
+            title = task_data.strip()
+            description = None
+
+        if not title:
+            await ctx.send(
+                "❌ Task title cannot be empty."
+            )
+            return
+
+        task, created, status = await task_service.create_task(
             project_id=project.id,
             title=title,
+            description=description,
             created_by_discord_user_id=ctx.author.id,
         )
+
+        if status == "invalid_priority":
+            await ctx.send(
+                "❌ Invalid task priority."
+            )
+            return
+
+        if not created:
+            await ctx.send(
+                "❌ The task could not be created."
+            )
+            return
 
         await ctx.send(
             f"✅ Task created in **{project.name}**.\n"
             f"📋 **{task.title}**\n"
-            f"🆔 Task ID: `{task.id}`"
+            f"🆔 Task ID: `{task.id}`\n"
+            f"📊 Status: `{task.status}`\n"
+            f"⚡ Priority: `{task.priority}`"
         )
 
     @task.command(name="list")
@@ -97,9 +136,23 @@ class TaskCommands(commands.Cog):
         ]
 
         for task in tasks:
+            assignee_ids = await task_service.get_assignees(
+                project.id,
+                task.id,
+            )
+
+            if assignee_ids:
+                assignees = ", ".join(
+                    f"<@{user_id}>"
+                    for user_id in assignee_ids
+                )
+            else:
+                assignees = "Unassigned"
+
             lines.append(
                 f"• `{task.id}` — **{task.title}** "
-                f"[{task.status}] [{task.priority}]"
+                f"[{task.status}] [{task.priority}]\n"
+                f"  👥 {assignees}"
             )
 
         await ctx.send(
@@ -136,11 +189,18 @@ class TaskCommands(commands.Cog):
             )
             return
 
-        assigned_to = (
-            f"<@{task.assigned_discord_user_id}>"
-            if task.assigned_discord_user_id
-            else "Unassigned"
+        assignee_ids = await task_service.get_assignees(
+            project.id,
+            task.id,
         )
+
+        if assignee_ids:
+            assigned_to = "\n".join(
+                f"• <@{user_id}>"
+                for user_id in assignee_ids
+            )
+        else:
+            assigned_to = "Unassigned"
 
         await ctx.send(
             f"📋 **{task.title}**\n"
@@ -148,7 +208,7 @@ class TaskCommands(commands.Cog):
             f"📁 Project: **{project.name}**\n"
             f"📊 Status: `{task.status}`\n"
             f"⚡ Priority: `{task.priority}`\n"
-            f"👤 Assigned: {assigned_to}\n"
+            f"👥 **Assigned:**\n{assigned_to}\n"
             f"📝 {task.description or 'No description'}"
         )
 
@@ -158,9 +218,9 @@ class TaskCommands(commands.Cog):
         ctx,
         project_name,
         task_id: int,
-        member: discord.Member,
+        members: Greedy[discord.Member],
     ):
-        """Assign a task to a project member."""
+        """Assign one or more project members to a task."""
 
         project = await project_service.get_project(
             project_name
@@ -172,9 +232,21 @@ class TaskCommands(commands.Cog):
             )
             return
 
-        if project.owner_discord_user_id != ctx.author.id:
+        if not await permission_service.can_manage_tasks(
+            project,
+            ctx.author.id,
+        ):
             await ctx.send(
-                "⛔ Only the project owner can assign tasks."
+                "⛔ You do not have permission to assign "
+                "tasks in this project."
+            )
+            return
+
+        if not members:
+            await ctx.send(
+                "❌ Please mention at least one member.\n"
+                "Example: "
+                "`!task assign Nova_test 1 @Edima @Developer`"
             )
             return
 
@@ -189,28 +261,158 @@ class TaskCommands(commands.Cog):
             )
             return
 
-        project_member = (
-            await project_member_service.get_member(
-                project.id,
-                member.id,
+        assigned = []
+        already_assigned = []
+        not_members = []
+
+        for member in members:
+            project_member = (
+                await project_member_service.get_member(
+                    project.id,
+                    member.id,
+                )
             )
+
+            if not project_member:
+                not_members.append(member)
+                continue
+
+            _, created, result_status = (
+                await task_service.assign_member(
+                    project.id,
+                    task.id,
+                    member.id,
+                )
+            )
+
+            if result_status == "already_assigned":
+                already_assigned.append(member)
+            elif created:
+                assigned.append(member)
+
+        lines = []
+
+        if assigned:
+            mentions = ", ".join(
+                member.mention
+                for member in assigned
+            )
+            lines.append(
+                f"✅ Assigned **{task.title}** to {mentions}."
+            )
+
+        if already_assigned:
+            mentions = ", ".join(
+                member.mention
+                for member in already_assigned
+            )
+            lines.append(
+                f"⚠️ Already assigned: {mentions}."
+            )
+
+        if not_members:
+            mentions = ", ".join(
+                member.mention
+                for member in not_members
+            )
+            lines.append(
+                f"❌ Not project members: {mentions}."
+            )
+
+        await ctx.send(
+            "\n".join(lines)
+            if lines
+            else "❌ No assignments were made."
         )
 
-        if not project_member:
+    @task.command(name="unassign")
+    async def task_unassign(
+        self,
+        ctx,
+        project_name,
+        task_id: int,
+        members: Greedy[discord.Member],
+    ):
+        """Remove one or more members from a task."""
+
+        project = await project_service.get_project(
+            project_name
+        )
+
+        if not project:
             await ctx.send(
-                f"❌ {member.mention} is not a member of "
-                f"**{project.name}**."
+                f"❌ Project `{project_name}` was not found."
             )
             return
 
-        await task_service.assign_task(
-            task.id,
-            member.id,
+        if not await permission_service.can_manage_tasks(
+            project,
+            ctx.author.id,
+        ):
+            await ctx.send(
+                "⛔ You do not have permission to unassign "
+                "task members."
+            )
+            return
+
+        if not members:
+            await ctx.send(
+                "❌ Please mention at least one member."
+            )
+            return
+
+        task = await task_service.get_task(
+            project.id,
+            task_id,
         )
 
+        if not task:
+            await ctx.send(
+                f"❌ Task `{task_id}` was not found."
+            )
+            return
+
+        removed = []
+        not_assigned = []
+
+        for member in members:
+            success, result_status = (
+                await task_service.remove_member(
+                    project.id,
+                    task.id,
+                    member.id,
+                )
+            )
+
+            if success:
+                removed.append(member)
+            elif result_status == "not_assigned":
+                not_assigned.append(member)
+
+        lines = []
+
+        if removed:
+            mentions = ", ".join(
+                member.mention
+                for member in removed
+            )
+            lines.append(
+                f"✅ Removed {mentions} from **{task.title}**."
+            )
+
+        if not_assigned:
+            mentions = ", ".join(
+                member.mention
+                for member in not_assigned
+            )
+            lines.append(
+                f"⚠️ Not assigned: {mentions}."
+            )
+
         await ctx.send(
-            f"✅ Task **{task.title}** assigned to "
-            f"{member.mention}."
+            "\n".join(lines)
+            if lines
+            else "❌ No assignments were removed."
         )
 
     @task.command(name="status")
@@ -233,6 +435,16 @@ class TaskCommands(commands.Cog):
             )
             return
 
+        if not await permission_service.can_manage_tasks(
+            project,
+            ctx.author.id,
+        ):
+            await ctx.send(
+                "⛔ You do not have permission to update "
+                "tasks in this project."
+            )
+            return
+
         task = await task_service.get_task(
             project.id,
             task_id,
@@ -244,24 +456,21 @@ class TaskCommands(commands.Cog):
             )
             return
 
-        valid_statuses = {
-            "todo",
-            "in_progress",
-            "done",
-        }
+        updated_task, updated, result_status = (
+            await task_service.update_status(
+                project.id,
+                task.id,
+                status,
+            )
+        )
 
-        if status not in valid_statuses:
+        if result_status == "invalid_status":
             await ctx.send(
                 "❌ Invalid status.\n"
                 "Available statuses: "
                 "`todo`, `in_progress`, `done`"
             )
             return
-
-        updated = await task_service.update_status(
-            task.id,
-            status,
-        )
 
         if not updated:
             await ctx.send(
@@ -270,8 +479,8 @@ class TaskCommands(commands.Cog):
             return
 
         await ctx.send(
-            f"✅ Task **{task.title}** is now "
-            f"`{status}`."
+            f"✅ Task **{updated_task.title}** is now "
+            f"`{updated_task.status}`."
         )
 
     @task.command(name="delete")
@@ -293,9 +502,13 @@ class TaskCommands(commands.Cog):
             )
             return
 
-        if project.owner_discord_user_id != ctx.author.id:
+        if not await permission_service.can_manage_tasks(
+            project,
+            ctx.author.id,
+        ):
             await ctx.send(
-                "⛔ Only the project owner can delete tasks."
+                "⛔ You do not have permission to delete "
+                "tasks in this project."
             )
             return
 
@@ -311,7 +524,8 @@ class TaskCommands(commands.Cog):
             return
 
         deleted = await task_service.delete_task(
-            task.id
+            project.id,
+            task.id,
         )
 
         if not deleted:

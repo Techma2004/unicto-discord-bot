@@ -290,19 +290,73 @@ class NovaUsage(Base):
         nullable=False,
     )
 
+class NovaTaskMember(Base):
+    """
+    Associates multiple project members with a NOVA task.
+    """
+
+    __tablename__ = "nova_task_members"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    task_id = Column(
+        Integer,
+        ForeignKey(
+            "nova_tasks.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    discord_user_id = Column(
+        BigInteger,
+        nullable=False,
+        index=True,
+    )
+
+    assigned_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    task = relationship(
+        "NovaTask",
+        back_populates="assignees",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "discord_user_id",
+            name="uq_nova_task_member",
+        ),
+    )
+
 
 class NovaTask(Base):
     """
     Represents a task belonging to a NOVA project.
+    A task can have multiple assigned members.
     """
 
     __tablename__ = "nova_tasks"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
 
     project_id = Column(
         Integer,
-        ForeignKey("nova_projects.id"),
+        ForeignKey(
+            "nova_projects.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
@@ -329,6 +383,8 @@ class NovaTask(Base):
         default="normal",
     )
 
+    # Kept temporarily for backwards compatibility
+    # with the existing database.
     assigned_discord_user_id = Column(
         BigInteger,
         nullable=True,
@@ -356,6 +412,13 @@ class NovaTask(Base):
     project = relationship(
         "NovaProject",
         back_populates="tasks",
+    )
+
+    assignees = relationship(
+        "NovaTaskMember",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="NovaTaskMember.assigned_at",
     )
 
 
