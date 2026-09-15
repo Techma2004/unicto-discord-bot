@@ -3,7 +3,7 @@ import os
 
 import discord
 from dotenv import load_dotenv
-
+from app.health import start_health_server
 from app.ai.router import GeminiRouter
 from app.bot.client import NOVAClient
 from app.services.context_manager import context_manager
@@ -386,13 +386,24 @@ bot.nova_ai_handler = process_ai_request
 # START
 # ============================================================
 
-def main():
+
+async def run_nova():
     logger.info(
         "Starting NOVA..."
     )
 
-    bot.run(
+    await start_health_server()
+
+    await bot.start(
         DISCORD_TOKEN
+    )
+
+
+def main():
+    import asyncio
+
+    asyncio.run(
+        run_nova()
     )
 
 
