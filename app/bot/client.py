@@ -1,3 +1,5 @@
+import os
+
 import discord
 from discord.ext import commands
 
@@ -50,8 +52,41 @@ class NOVAClient(commands.Bot):
             "app.bot.events"
         )
 
-        # Sync slash commands with Discord.
-        await self.tree.sync()
-
         print("NOVA command extensions loaded.")
-        print("Slash commands synced.")
+
+        # Slash-command synchronization is disabled by default.
+        #
+        # Set SYNC_COMMANDS=true in the environment when you
+        # intentionally want NOVA to synchronize slash commands.
+        sync_commands = os.getenv(
+            "SYNC_COMMANDS",
+            "false"
+        ).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        if sync_commands:
+            try:
+                print("Synchronizing slash commands with Discord...")
+                synced = await self.tree.sync()
+                print(
+                    f"Slash commands synced successfully: {len(synced)} commands."
+                )
+            except discord.HTTPException as error:
+                print(
+                    "Slash-command synchronization failed: "
+                    f"HTTP {error.status}."
+                )
+            except Exception as error:
+                print(
+                    "Slash-command synchronization failed: "
+                    f"{type(error).__name__}: {error}"
+                )
+        else:
+            print(
+                "Slash-command synchronization skipped "
+                "(SYNC_COMMANDS is disabled)."
+            )
