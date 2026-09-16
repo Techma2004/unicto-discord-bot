@@ -1,11 +1,13 @@
+import asyncio
 import logging
 import os
-import asyncio
+
 import discord
 from dotenv import load_dotenv
-from app.health import start_health_server
+
 from app.ai.router import GeminiRouter
 from app.bot.client import NOVAClient
+from app.health import start_health_server
 from app.services.context_manager import context_manager
 from app.services.memory import memory
 from app.services.request_queue import request_queue
@@ -23,10 +25,10 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not DISCORD_TOKEN:
-    raise RuntimeError("DISCORD_TOKEN is not set in .env")
+    raise RuntimeError("DISCORD_TOKEN is not set in environment.")
 
 if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set in .env")
+    raise RuntimeError("GEMINI_API_KEY is not set in environment.")
 
 
 # ============================================================
@@ -35,7 +37,7 @@ if not GEMINI_API_KEY:
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
 logger = logging.getLogger("nova")
@@ -62,9 +64,13 @@ gemini_router = GeminiRouter(
 # ============================================================
 
 async def ask_nova(
-    prompt,
-    conversation_context="",
+    prompt: str,
+    conversation_context: str = "",
 ):
+    """
+    Send a prompt through the Gemini router.
+    """
+
     return await gemini_router.ask(
         prompt,
         conversation_context,
@@ -83,7 +89,10 @@ bot = NOVAClient(request_queue)
 # ============================================================
 
 def get_author(target):
-    """Return the Discord user from a Message or Interaction."""
+    """
+    Return the Discord user from either a Message
+    or an Interaction.
+    """
 
     if isinstance(target, discord.Interaction):
         return target.user
@@ -92,7 +101,10 @@ def get_author(target):
 
 
 def get_channel(target):
-    """Return the Discord channel from a Message or Interaction."""
+    """
+    Return the Discord channel from either a Message
+    or an Interaction.
+    """
 
     return target.channel
 
@@ -103,24 +115,35 @@ def get_channel(target):
 
 async def send_reply(
     target,
-    text,
+    text: str,
 ):
     """
     Send a response to either a Discord Message
     or a Discord Interaction.
 
-    Discord messages are limited to 2000 characters.
+    Discord messages have a 2000-character limit,
+    so long responses are automatically split.
     """
 
-    for index in range(
-        0,
-        len(text),
-        2000,
-    ):
-        chunk = text[index:index + 2000]
+    if not text:
+        text = "I don't have a response for that yet."
+
+    chunks = [
+        text[index:index + 2000]
+        for index in range(0, len(text), 2000)
+    ]
+
+    for chunk in chunks:
 
         if isinstance(target, discord.Interaction):
-            await target.followup.send(chunk)
+
+            # Interaction responses must be handled differently
+            # depending on whether the initial response was sent.
+            if not target.response.is_done():
+                await target.response.send_message(chunk)
+            else:
+                await target.followup.send(chunk)
+
         else:
             await target.reply(
                 chunk,
@@ -134,17 +157,19 @@ async def send_reply(
 
 async def process_ai_request(
     target,
-    prompt,
+    prompt: str,
 ):
     """
     Submit a NOVA AI request to the request queue.
 
-    Supports both:
+    Supports:
     - Discord Message
     - Discord Interaction
     """
 
-    if not prompt.strip():
+    prompt = prompt.strip()
+
+    if not prompt:
         await send_reply(
             target,
             "Please give me something to work with 😄",
@@ -159,12 +184,14 @@ async def process_ai_request(
         )
 
     except RuntimeError as error:
+
         await send_reply(
             target,
             f"⏳ {error}",
         )
 
     except Exception:
+
         logger.exception(
             "Queued NOVA request failed."
         )
@@ -182,26 +209,37 @@ async def process_ai_request(
 
 async def process_ai_request_inner(
     target,
-    prompt,
+    prompt: str,
 ):
     """
-    Actual NOVA AI + team + usage guard + memory workflow.
+    Actual NOVA AI workflow.
 
-    This function runs inside the request queue.
+    Handles:
+
+    1. Usage limits
+    2. Team registration
+    3. User memory
+    4. Conversation memory
+    5. Context building
+    6. Gemini generation
+    7. Usage recording
+    8. Message persistence
+    9. Discord response
     """
 
     author = get_author(target)
     channel = get_channel(target)
 
-    # ------------------------------------------------
-    # 1. Usage Guard
-    # ------------------------------------------------
+    # --------------------------------------------------------
+    # 1. USAGE GUARD
+    # --------------------------------------------------------
 
     allowed, limit_message = await usage_guard.check(
         author.id
     )
 
     if not allowed:
+
         logger.info(
             "Usage Guard blocked Discord ID %s: %s",
             author.id,
@@ -216,10 +254,11 @@ async def process_ai_request_inner(
         return
 
     try:
+
         async with channel.typing():
 
             # ------------------------------------------------
-            # 2. Register / update UNICTO team member
+            # 2. REGISTER / UPDATE TEAM MEMBER
             # ------------------------------------------------
 
             member, is_new_member = (
@@ -229,13 +268,14 @@ async def process_ai_request_inner(
             )
 
             logger.info(
-                "Team member registered | Discord ID: %s | New: %s",
+                "Team member registered | "
+                "Discord ID: %s | New: %s",
                 author.id,
                 is_new_member,
             )
 
             # ------------------------------------------------
-            # 3. Identify / create NOVA user
+            # 3. IDENTIFY / CREATE NOVA USER
             # ------------------------------------------------
 
             user_id = await memory.get_or_create_user(
@@ -249,7 +289,7 @@ async def process_ai_request_inner(
             )
 
             # ------------------------------------------------
-            # 4. Identify / create conversation
+            # 4. IDENTIFY / CREATE CONVERSATION
             # ------------------------------------------------
 
             conversation_id = (
@@ -265,7 +305,7 @@ async def process_ai_request_inner(
             )
 
             # ------------------------------------------------
-            # 5. Load previous conversation
+            # 5. LOAD PREVIOUS CONVERSATION
             # ------------------------------------------------
 
             previous_messages = (
@@ -281,7 +321,7 @@ async def process_ai_request_inner(
             )
 
             # ------------------------------------------------
-            # 6. Context Manager
+            # 6. BUILD CONTEXT
             # ------------------------------------------------
 
             member_context = (
@@ -302,7 +342,7 @@ async def process_ai_request_inner(
             )
 
             # ------------------------------------------------
-            # 7. Ask Gemini
+            # 7. ASK GEMINI
             # ------------------------------------------------
 
             reply, model_used = await ask_nova(
@@ -310,8 +350,13 @@ async def process_ai_request_inner(
                 conversation_context,
             )
 
+            logger.info(
+                "Gemini response generated | Model: %s",
+                model_used,
+            )
+
             # ------------------------------------------------
-            # 8. Record successful usage
+            # 8. RECORD SUCCESSFUL USAGE
             # ------------------------------------------------
 
             usage_guard.record_request(
@@ -324,13 +369,14 @@ async def process_ai_request_inner(
             )
 
             logger.info(
-                "Usage recorded | Discord ID: %s | Model: %s",
+                "Usage recorded | "
+                "Discord ID: %s | Model: %s",
                 author.id,
                 model_used,
             )
 
             # ------------------------------------------------
-            # 9. Save user message
+            # 9. SAVE USER MESSAGE
             # ------------------------------------------------
 
             await memory.save_message(
@@ -340,7 +386,7 @@ async def process_ai_request_inner(
             )
 
             # ------------------------------------------------
-            # 10. Save NOVA response
+            # 10. SAVE NOVA RESPONSE
             # ------------------------------------------------
 
             await memory.save_message(
@@ -355,7 +401,7 @@ async def process_ai_request_inner(
             )
 
             # ------------------------------------------------
-            # 11. Send response
+            # 11. SEND RESPONSE
             # ------------------------------------------------
 
             await send_reply(
@@ -364,15 +410,26 @@ async def process_ai_request_inner(
             )
 
     except Exception:
+
         logger.exception(
             "NOVA request failed."
         )
 
-        await send_reply(
-            target,
-            "⚠️ I ran into a problem while processing that request. "
-            "Please try again.",
-        )
+        # Avoid masking the original error if Discord itself
+        # fails while sending the error message.
+        try:
+
+            await send_reply(
+                target,
+                "⚠️ I ran into a problem while processing that request. "
+                "Please try again.",
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Failed to send NOVA error response."
+            )
 
 
 # ============================================================
@@ -381,36 +438,98 @@ async def process_ai_request_inner(
 
 bot.nova_ai_handler = process_ai_request
 
+
 # ============================================================
-# START
+# START NOVA
 # ============================================================
 
 async def run_nova():
-    logger.info("Starting NOVA...")
+    """
+    Start the NOVA health server and Discord client.
 
-    await start_health_server()
-    logger.info("Health server started.")
+    The Discord connection automatically retries when a
+    temporary network, gateway, or rate-limit problem occurs.
+    """
+
+    logger.info("========================================")
+    logger.info("Starting NOVA...")
+    logger.info("========================================")
+
+    # --------------------------------------------------------
+    # HEALTH SERVER
+    # --------------------------------------------------------
+
+    try:
+
+        await start_health_server()
+
+        logger.info(
+            "Health server started successfully."
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Failed to start health server."
+        )
+
+        raise
+
+    # --------------------------------------------------------
+    # DISCORD CONNECTION LOOP
+    # --------------------------------------------------------
 
     while True:
+
         try:
-            logger.info("Connecting NOVA to Discord...")
 
-            await bot.start(DISCORD_TOKEN)
+            logger.info(
+                "Connecting NOVA to Discord..."
+            )
 
-            logger.warning("NOVA Discord connection closed.")
+            await bot.start(
+                DISCORD_TOKEN
+            )
+
+            logger.warning(
+                "NOVA Discord connection closed."
+            )
+
+        # ----------------------------------------------------
+        # HTTP / RATE LIMIT
+        # ----------------------------------------------------
 
         except discord.HTTPException as error:
-            retry_after = getattr(error, "retry_after", None)
+
+            retry_after = getattr(
+                error,
+                "retry_after",
+                None,
+            )
+
+            response = getattr(
+                error,
+                "response",
+                None,
+            )
 
             logger.error(
-                "Discord HTTP error | status=%s | retry_after=%s | error=%s",
+                "Discord HTTP error | "
+                "status=%s | retry_after=%s | "
+                "response=%s | error=%s",
                 error.status,
                 retry_after,
+                response,
                 error,
             )
 
             if error.status == 429:
-                wait_time = retry_after if retry_after is not None else 60
+
+                wait_time = (
+                    retry_after
+                    if retry_after is not None
+                    else 60
+                )
 
                 logger.warning(
                     "Discord rate limited NOVA. "
@@ -418,19 +537,37 @@ async def run_nova():
                     wait_time,
                 )
 
-                await asyncio.sleep(wait_time)
+                await asyncio.sleep(
+                    wait_time
+                )
+
                 continue
+
+            logger.error(
+                "Non-retryable Discord HTTP error."
+            )
 
             raise
 
+        # ----------------------------------------------------
+        # INVALID TOKEN / AUTHENTICATION
+        # ----------------------------------------------------
+
         except discord.LoginFailure:
+
             logger.exception(
                 "NOVA failed Discord authentication. "
                 "Check the DISCORD_TOKEN."
             )
+
             raise
 
+        # ----------------------------------------------------
+        # GATEWAY UNAVAILABLE
+        # ----------------------------------------------------
+
         except discord.GatewayNotFound:
+
             logger.exception(
                 "Discord Gateway could not be reached. "
                 "Retrying in 30 seconds..."
@@ -438,9 +575,15 @@ async def run_nova():
 
             await asyncio.sleep(30)
 
+        # ----------------------------------------------------
+        # GATEWAY CONNECTION CLOSED
+        # ----------------------------------------------------
+
         except discord.ConnectionClosed as error:
+
             logger.warning(
-                "Discord Gateway connection closed | code=%s | reason=%s",
+                "Discord Gateway connection closed | "
+                "code=%s | reason=%s",
                 error.code,
                 error,
             )
@@ -451,14 +594,45 @@ async def run_nova():
 
             await asyncio.sleep(30)
 
+        # ----------------------------------------------------
+        # SHUTDOWN
+        # ----------------------------------------------------
+
         except asyncio.CancelledError:
-            logger.info("NOVA shutdown requested.")
+
+            logger.info(
+                "NOVA shutdown requested."
+            )
+
             raise
 
+        # ----------------------------------------------------
+        # UNEXPECTED ERROR
+        # ----------------------------------------------------
+
         except Exception:
+
             logger.exception(
                 "NOVA stopped unexpectedly. "
                 "Waiting 30 seconds before retrying..."
             )
 
             await asyncio.sleep(30)
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    asyncio.run(
+        run_nova()
+    )
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+    main()
