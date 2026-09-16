@@ -386,28 +386,73 @@ bot.nova_ai_handler = process_ai_request
 # ============================================================
 
 async def run_nova():
-    logger.info(
-        "Starting NOVA..."
-    )
+    logger.info("Starting NOVA...")
 
     await start_health_server()
+    logger.info("Health server started.")
 
     while True:
         try:
-            await bot.start(
-                DISCORD_TOKEN
-            )
+            logger.info("Connecting NOVA to Discord...")
+
+            await bot.start(DISCORD_TOKEN)
+
+            logger.warning("NOVA Discord connection closed.")
 
         except discord.HTTPException as error:
+            retry_after = getattr(error, "retry_after", None)
+
+            logger.error(
+                "Discord HTTP error | status=%s | retry_after=%s | error=%s",
+                error.status,
+                retry_after,
+                error,
+            )
+
             if error.status == 429:
+                wait_time = retry_after if retry_after is not None else 60
+
                 logger.warning(
                     "Discord rate limited NOVA. "
-                    "Waiting 5 minutes before retrying..."
+                    "Waiting %.1f seconds before retrying...",
+                    wait_time,
                 )
 
-                await asyncio.sleep(300)
+                await asyncio.sleep(wait_time)
                 continue
 
+            raise
+
+        except discord.LoginFailure:
+            logger.exception(
+                "NOVA failed Discord authentication. "
+                "Check the DISCORD_TOKEN."
+            )
+            raise
+
+        except discord.GatewayNotFound:
+            logger.exception(
+                "Discord Gateway could not be reached. "
+                "Retrying in 30 seconds..."
+            )
+
+            await asyncio.sleep(30)
+
+        except discord.ConnectionClosed as error:
+            logger.warning(
+                "Discord Gateway connection closed | code=%s | reason=%s",
+                error.code,
+                error,
+            )
+
+            logger.info(
+                "Retrying Discord connection in 30 seconds..."
+            )
+
+            await asyncio.sleep(30)
+
+        except asyncio.CancelledError:
+            logger.info("NOVA shutdown requested.")
             raise
 
         except Exception:
@@ -417,15 +462,3 @@ async def run_nova():
             )
 
             await asyncio.sleep(30)
-
-
-def main():
-    import asyncio
-
-    asyncio.run(
-        run_nova()
-    )
-
-
-if __name__ == "__main__":
-    main()
